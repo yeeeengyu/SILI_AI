@@ -186,14 +186,6 @@ st.markdown(
         padding: 20px;
     }
 
-    div[data-testid="stButton"] > button {
-        width: 100%;
-        border-radius: 8px;
-        min-height: 60px;
-        font-weight: 800;
-        font-size: 22px;
-    }
-
     div[data-testid="stSlider"] {
         padding-top: 8px;
         padding-bottom: 8px;
@@ -245,6 +237,8 @@ STATUS_META = {
     },
 }
 
+LEAK_ACTIVE_LEVEL = 70
+
 
 def init_state():
     if "compressor_on" not in st.session_state:
@@ -258,6 +252,10 @@ def init_state():
 def set_compressor_power(is_on):
     st.session_state.compressor_on = is_on
     api_request("POST", "/simulator/power", {"compressor_on": is_on})
+
+
+def set_compressor_power_from_control():
+    set_compressor_power(st.session_state.compressor_power_control == "켜짐")
 
 
 def api_request(method, path, payload=None, timeout=2.5):
@@ -388,6 +386,11 @@ default_config = {
 config = {**default_config, **snapshot["config"]} if server_available else default_config
 current_power = snapshot["compressor_on"] if server_available else st.session_state.compressor_on
 st.session_state.compressor_on = current_power
+st.session_state.compressor_power_control = "켜짐" if current_power else "꺼짐"
+if "leak_scenario" not in st.session_state:
+    st.session_state.leak_scenario = "leak" if int(config["leak_level"]) > 0 else "normal"
+if "page_control" not in st.session_state:
+    st.session_state.page_control = "대시보드"
 
 # =========================
 # 머리글
@@ -403,75 +406,20 @@ with left:
         unsafe_allow_html=True,
     )
 
+with right:
+    selected_page = st.segmented_control(
+        "페이지",
+        ["대시보드", "설정"],
+        required=True,
+        key="page_control",
+        width="stretch",
+    )
+
 if not server_available:
     st.error(f"서버 연결 실패: {st.session_state.get('api_error', '응답 없음')}")
     st.info("먼저 터미널에서 `uv run uvicorn main:app --reload --port 8000` 서버를 실행해주세요.")
 
-# =========================
-# 조작부
-# =========================
-control_col, state_col = st.columns([1.15, 1])
-
-with control_col:
-    st.markdown('<div class="panel-title">운전 조작</div>', unsafe_allow_html=True)
-    on_col, off_col = st.columns(2)
-    with on_col:
-        st.button(
-            "컴프레셔 켜기",
-            type="primary",
-            disabled=st.session_state.compressor_on,
-            on_click=set_compressor_power,
-            args=(True,),
-        )
-    with off_col:
-        st.button(
-            "컴프레셔 끄기",
-            disabled=not st.session_state.compressor_on,
-            on_click=set_compressor_power,
-            args=(False,),
-        )
-
-    mode_options = {"생산 시간": "production", "비생산 시간": "non_production"}
-    current_mode_label = "비생산 시간" if config["time_mode"] == "non_production" else "생산 시간"
-    time_mode_label = st.radio(
-        "시간대",
-        list(mode_options.keys()),
-        index=list(mode_options.keys()).index(current_mode_label),
-        horizontal=True,
-    )
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        load_percent = st.slider("부하율 (%)", 0, 100, int(config["load_percent"]), 1)
-        leak_level = st.slider("누설 정도 (%)", 0, 100, int(config["leak_level"]), 1)
-        vibration_base = st.slider("진동 기준값 (g RMS)", 0.001, 0.050, float(config["vibration_base"]), 0.001)
-    with c2:
-        idle_power_level = st.slider("유휴 전력 정도 (%)", 0, 100, int(config["idle_power_level"]), 1)
-        current_base = st.slider("전류 기준값 (A)", 0.2, 8.0, float(config["current_base"]), 0.1)
-        pressure_target = st.slider("목표 압력 (bar)", 0.2, 10.0, float(config["pressure_target"]), 0.1)
-    with c3:
-        temperature_base = st.slider("기준 온도 (℃)", 10.0, 60.0, float(config["temperature_base"]), 0.5)
-        air_frequency = st.slider("공기 주파수 (Hz)", 0, 500, int(config["air_frequency"]), 1)
-
-    live_refresh = st.toggle("실시간 자동 갱신", key="live_refresh")
-
-config_payload = {
-    "time_mode": mode_options[time_mode_label],
-    "load_percent": load_percent,
-    "leak_level": leak_level,
-    "idle_power_level": idle_power_level,
-    "vibration_base": vibration_base,
-    "current_base": current_base,
-    "pressure_target": pressure_target,
-    "temperature_base": temperature_base,
-    "air_frequency": air_frequency,
-}
-if server_available:
-    updated_snapshot = update_server_config(config_payload)
-    if updated_snapshot is not None:
-        snapshot = updated_snapshot
-
-refresh_interval = "1s" if live_refresh else None
+refresh_interval = "1s" if st.session_state.live_refresh else None
 
 
 def build_live_values():
@@ -494,6 +442,14 @@ def build_live_values():
         "leak_alert": False,
         "idle_power_alert": False,
         "alert_level": 0,
+        "anomaly_score": 0,
+        "leak_score": 0,
+        "idle_power_score": 0,
+        "baseline_ready": False,
+        "baseline_count": 0,
+        "baseline_source": "estimated",
+        "leak_sustain_count": 0,
+        "idle_power_sustain_count": 0,
         "timestamp": datetime.now().strftime("%H:%M:%S"),
     }
     latest = {
@@ -510,10 +466,112 @@ def build_live_values():
         "leak_alert": False,
         "idle_power_alert": False,
         "alert_level": 0,
+        "anomaly_score": 0,
+        "leak_score": 0,
+        "idle_power_score": 0,
+        "baseline_ready": False,
+        "baseline_count": 0,
+        "baseline_source": "estimated",
+        "leak_sustain_count": 0,
+        "idle_power_sustain_count": 0,
         "timestamp": datetime.now().strftime("%H:%M:%S"),
         **latest,
     }
     return active_state, df, latest, alerts
+
+
+def render_settings_page():
+    global snapshot
+
+    control_col, state_col = st.columns([1.15, 1])
+
+    with control_col:
+        st.markdown('<div class="panel-title">운전 조작</div>', unsafe_allow_html=True)
+        st.segmented_control(
+            "컴프레셔 전원",
+            ["켜짐", "꺼짐"],
+            required=True,
+            key="compressor_power_control",
+            on_change=set_compressor_power_from_control,
+            width="stretch",
+        )
+
+        mode_options = {"생산 시간": "production", "비생산 시간": "non_production"}
+        current_mode_label = "비생산 시간" if config["time_mode"] == "non_production" else "생산 시간"
+        time_mode_label = st.segmented_control(
+            "시간대",
+            list(mode_options.keys()),
+            default=current_mode_label,
+            required=True,
+            key="time_mode_control",
+            width="stretch",
+        )
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            load_percent = st.slider("부하율 (%)", 0, 100, int(config["load_percent"]), 1)
+            current_leak_label = "누설 발생" if st.session_state.leak_scenario == "leak" else "누설 없음"
+            leak_scenario_label = st.segmented_control(
+                "누설 상황",
+                ["누설 없음", "누설 발생"],
+                default=current_leak_label,
+                required=True,
+                key="leak_scenario_control",
+                width="stretch",
+            )
+            leak_scenario = "leak" if leak_scenario_label == "누설 발생" else "normal"
+            st.session_state.leak_scenario = leak_scenario
+            leak_level = LEAK_ACTIVE_LEVEL if leak_scenario == "leak" else 0
+            vibration_base = st.slider("진동 기준값 (g RMS)", 0.001, 0.050, float(config["vibration_base"]), 0.001)
+        with c2:
+            idle_power_level = st.slider("유휴 전력 정도 (%)", 0, 100, int(config["idle_power_level"]), 1)
+            current_base = st.slider("전류 기준값 (A)", 0.2, 8.0, float(config["current_base"]), 0.1)
+            pressure_target = st.slider("목표 압력 (bar)", 0.2, 10.0, float(config["pressure_target"]), 0.1)
+        with c3:
+            temperature_base = st.slider("기준 온도 (℃)", 10.0, 60.0, float(config["temperature_base"]), 0.5)
+            air_frequency = st.slider("공기 주파수 (Hz)", 0, 500, int(config["air_frequency"]), 1)
+
+        st.toggle("실시간 자동 갱신", key="live_refresh")
+
+    config_payload = {
+        "time_mode": mode_options[time_mode_label],
+        "load_percent": load_percent,
+        "leak_level": leak_level,
+        "idle_power_level": idle_power_level,
+        "vibration_base": vibration_base,
+        "current_base": current_base,
+        "pressure_target": pressure_target,
+        "temperature_base": temperature_base,
+        "air_frequency": air_frequency,
+    }
+    if server_available:
+        updated_snapshot = update_server_config(config_payload)
+        if updated_snapshot is not None:
+            snapshot = updated_snapshot
+
+    with state_col:
+        active_state = snapshot["status"] if server_available else "off"
+        state_panel(active_state)
+
+    st.write("")
+    st.markdown('<div class="panel-title">현재 설정값</div>', unsafe_allow_html=True)
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {"항목": "시간대", "값": "비생산 시간" if config_payload["time_mode"] == "non_production" else "생산 시간"},
+                {"항목": "부하율", "값": f'{config_payload["load_percent"]}%'},
+                {"항목": "누설 상황", "값": "누설 발생" if config_payload["leak_level"] > 0 else "누설 없음"},
+                {"항목": "유휴 전력 정도", "값": f'{config_payload["idle_power_level"]}%'},
+                {"항목": "진동 기준값", "값": f'{config_payload["vibration_base"]:.3f} g RMS'},
+                {"항목": "전류 기준값", "값": f'{config_payload["current_base"]:.1f} A'},
+                {"항목": "목표 압력", "값": f'{config_payload["pressure_target"]:.1f} bar'},
+                {"항목": "기준 온도", "값": f'{config_payload["temperature_base"]:.1f} ℃'},
+                {"항목": "공기 주파수", "값": f'{config_payload["air_frequency"]} Hz'},
+            ]
+        ),
+        width="stretch",
+        hide_index=True,
+    )
 
 
 @st.fragment(run_every=refresh_interval)
@@ -571,22 +629,48 @@ def render_live_dashboard():
     st.write("")
 
     is_non_production = latest.get("time_mode") == "non_production"
-    leak_text = "누설 의심" if latest.get("leak_alert") else "정상"
-    idle_text = "낭비 의심" if latest.get("idle_power_alert") else "정상"
+    leak_score = int(latest.get("leak_score", 0))
+    idle_power_score = int(latest.get("idle_power_score", 0))
+    anomaly_score = int(latest.get("anomaly_score", 0))
+    leak_sustain_count = int(latest.get("leak_sustain_count", 0))
+    idle_power_sustain_count = int(latest.get("idle_power_sustain_count", 0))
+    leak_text = (
+        "누설 의심"
+        if latest.get("leak_alert")
+        else f"감지 중 {leak_sustain_count}/4"
+        if is_non_production and leak_score >= 70
+        else "정상"
+    )
+    idle_text = (
+        "낭비 의심"
+        if latest.get("idle_power_alert")
+        else f"감지 중 {idle_power_sustain_count}/4"
+        if is_non_production and idle_power_score >= 65
+        else "정상"
+    )
     mode_text = "비생산 시간" if is_non_production else "생산 시간"
+    baseline_text = "학습 기준선" if latest.get("baseline_source") == "learned" else "추정 기준선"
 
-    a1, a2, a3 = st.columns(3)
+    a1, a2, a3, a4, a5, a6 = st.columns(6)
     a1.metric("시간대", mode_text)
     a2.metric("압축공기 누설", leak_text)
     a3.metric("유휴 전력 낭비", idle_text)
+    a4.metric("누설 점수", f"{leak_score}점")
+    a5.metric("유휴전력 점수", f"{idle_power_score}점")
+    a6.metric("종합 이상 점수", f"{anomaly_score}점")
 
-    alert_class = "alert-danger" if latest.get("alert_level", 0) else "alert-normal"
-    alert_title = "점검 알림 발생" if latest.get("alert_level", 0) else "현재 감지 상태 정상"
-    alert_copy = (
-        "비생산 시간대에 기준보다 높은 공기 사용량, 소음 또는 전류가 지속되고 있습니다. 알림 이력을 확인하고 우선 점검 위치를 확인하세요."
-        if latest.get("alert_level", 0)
-        else "비생산 시간대 기준을 초과하는 누설 또는 유휴 전력 낭비 패턴이 지속되지 않았습니다."
-    )
+    has_confirmed_alert = latest.get("alert_level", 0) > 0
+    has_anomaly_pattern = anomaly_score >= 70
+    alert_class = "alert-danger" if has_confirmed_alert or has_anomaly_pattern else "alert-normal"
+    if has_confirmed_alert:
+        alert_title = "점검 알림 발생"
+        alert_copy = "정상 기준선 대비 편차가 4회 연속 지속되었습니다. 알림 이력을 확인하고 우선 점검 위치를 확인하세요."
+    elif has_anomaly_pattern:
+        alert_title = "이상 패턴 감지 중"
+        alert_copy = f"종합 이상 점수가 {anomaly_score}점입니다. 누설은 {leak_score}점, 유휴전력은 {idle_power_score}점이며 4회 연속 지속되면 점검 알림으로 확정됩니다."
+    else:
+        alert_title = "현재 감지 상태 정상"
+        alert_copy = f"{baseline_text}과 비교했을 때 지속적인 이상 패턴이 감지되지 않았습니다."
     st.markdown(
         (
             f'<div class="alert-panel {alert_class}">'
@@ -659,11 +743,12 @@ def render_live_dashboard():
     alarm_text = "점검 필요" if alarm_count > 0 else "정상"
     motor_state = "꺼짐" if active_state == "off" else "켜짐"
 
-    b1, b2, b3, b4 = st.columns(4)
+    b1, b2, b3, b4, b5 = st.columns(5)
     b1.metric("모터 상태", motor_state)
     b2.metric("공기 주파수", f'{latest["frequency"]:.2f} Hz')
     b3.metric("부하율", f'{latest["operation"]:.1f} %')
     b4.metric("알람", alarm_text)
+    b5.metric("기준선", baseline_text, f'{latest.get("baseline_count", 0)}개')
 
     st.markdown('<div class="panel-title">알림 및 점검 이력</div>', unsafe_allow_html=True)
     if alerts:
@@ -687,10 +772,9 @@ def render_live_dashboard():
     st.caption(f"마지막 수신 시간: {server_time}")
 
 
-with right:
+if selected_page == "설정":
+    render_settings_page()
+else:
     render_status_badge()
-
-with state_col:
     render_state_panel()
-
-render_live_dashboard()
+    render_live_dashboard()
