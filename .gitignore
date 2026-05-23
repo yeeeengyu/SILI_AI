@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local simulator state
+equipment_store.json
+equipment_store.json.tmp
