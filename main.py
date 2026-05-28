@@ -27,7 +27,23 @@ IDLE_CURRENT_RATIO_THRESHOLD = 0.42
 VIBRATION_ALARM_THRESHOLD = 0.045
 CURRENT_ALARM_RATIO_THRESHOLD = 1.35
 TEMPERATURE_ALARM_DELTA = 8.0
+PRESSURE_LOSS_ALERT_RATIO = 0.12
 ALERT_SUSTAIN_COUNT = 4
+DEFAULT_WASTE_DETECTION_FIELDS = [
+    "air_flow",
+    "sound_db",
+    "current",
+    "pressure",
+    "vibration",
+    "temperature",
+]
+ALERT_TYPE_FIELDS = {
+    "압축공기 누설 의심": {"pressure", "air_flow", "sound_db"},
+    "압력 유지 전력 낭비 의심": {"pressure", "current"},
+    "유휴 설비 전력 낭비 의심": {"pressure", "current"},
+}
+
+WasteDetectionField = Literal["air_flow", "sound_db", "current", "pressure", "vibration", "temperature"]
 
 
 class SimulatorConfig(BaseModel):
@@ -46,6 +62,9 @@ class SimulatorConfig(BaseModel):
     pressure_target: float = Field(4.2, ge=0.2, le=10.0)
     temperature_base: float = Field(29.0, ge=10.0, le=60.0)
     air_frequency: int = Field(412, ge=0, le=500)
+    waste_detection_fields: list[WasteDetectionField] = Field(
+        default_factory=lambda: DEFAULT_WASTE_DETECTION_FIELDS.copy()
+    )
 
 
 class PowerCommand(BaseModel):
@@ -93,6 +112,7 @@ class Simulator:
         with self.lock:
             self._advance()
             self.config = config.model_copy(update={"time_mode": self._time_mode_for_config(config)})
+            self._sync_alert_state_with_detection_fields()
             self._step(0.45)
             self.last_tick = monotonic()
             return self.snapshot()
@@ -138,13 +158,17 @@ class Simulator:
         is_non_production = time_mode == "non_production"
         leak_ratio = self.config.leak_level / 100
         idle_power_ratio = self.config.idle_power_level / 100
+        pressure_loss_ratio = min(1.0, leak_ratio + (idle_power_ratio if is_non_production else idle_power_ratio * 0.25))
         self.sequence += 1
         phase = self.sequence * 0.22
         noise = self.random.uniform
 
         if state == "off":
             operation = 0.0
-            target_pressure = self.pressure
+            target_pressure = max(
+                self.pressure - self.config.pressure_target * (0.005 + pressure_loss_ratio * 0.06),
+                0.0,
+            )
             target_current = 0.03
             target_vibration = 0.002
             target_temperature = self.config.temperature_base - 1.5
@@ -152,24 +176,32 @@ class Simulator:
             target_air_flow = 0.0
             target_sound_db = 38.0
         elif state == "idle":
-            operation = 18 + 4 * sin(phase)
-            target_pressure = self.config.pressure_target * (0.78 + 0.03 * sin(phase * 0.8))
-            target_current = self.config.current_base * (0.28 + 0.04 * sin(phase)) + self.config.current_base * idle_power_ratio * 0.45
-            target_vibration = self.config.vibration_base * (0.45 + 0.06 * sin(phase * 1.4))
-            target_temperature = self.config.temperature_base + 1.0 + 0.25 * sin(phase * 0.7)
-            target_frequency = self.config.air_frequency * 0.28
-            target_air_flow = 2.0 + leak_ratio * 42.0 + max(load - 0.12, 0) * 28.0
-            target_sound_db = 43.0 + leak_ratio * 20.0 + idle_power_ratio * 4.0
+            recovery_effort = min(1.0, 0.08 + pressure_loss_ratio * 0.92)
+            operation = 4.0 + recovery_effort * 38.0 + 2.0 * sin(phase)
+            target_pressure = self.config.pressure_target * max(
+                0.55,
+                0.98 - pressure_loss_ratio * 0.42 + 0.015 * sin(phase * 0.8),
+            )
+            target_current = self.config.current_base * (0.10 + recovery_effort * 0.72 + 0.02 * sin(phase))
+            target_vibration = self.config.vibration_base * (0.35 + recovery_effort * 0.55 + 0.04 * sin(phase * 1.4))
+            target_temperature = self.config.temperature_base + 0.4 + recovery_effort * 2.8 + 0.25 * sin(phase * 0.7)
+            target_frequency = self.config.air_frequency * (0.12 + recovery_effort * 0.45)
+            target_air_flow = 0.8 + pressure_loss_ratio * 58.0
+            target_sound_db = 39.0 + recovery_effort * 18.0 + leak_ratio * 8.0
         else:
-            operation = 45 + load * 55 + 3.5 * sin(phase * 0.6)
+            recovery_effort = min(1.0, load * 0.72 + pressure_loss_ratio * 0.42)
+            operation = 36 + recovery_effort * 62 + 3.5 * sin(phase * 0.6)
             pulse = 1.0 if self.sequence % 36 in (0, 1, 2) else 0.0
-            target_pressure = self.config.pressure_target * (0.76 + 0.23 * load)
-            target_current = self.config.current_base * (0.58 + 0.64 * load) + pulse * 0.32 + self.config.current_base * idle_power_ratio * 0.25
-            target_vibration = self.config.vibration_base * (0.9 + 0.65 * load) + pulse * 0.008
-            target_temperature = self.config.temperature_base + 2.5 + 5.8 * load + 0.7 * sin(phase * 0.45)
-            target_frequency = self.config.air_frequency * (0.72 + 0.28 * load)
-            target_air_flow = 12.0 + load * 150.0 + leak_ratio * 42.0
-            target_sound_db = 51.0 + load * 16.0 + leak_ratio * 18.0
+            target_pressure = self.config.pressure_target * max(
+                0.62,
+                0.99 - load * 0.10 - pressure_loss_ratio * 0.28,
+            )
+            target_current = self.config.current_base * (0.42 + recovery_effort * 0.82) + pulse * 0.32
+            target_vibration = self.config.vibration_base * (0.72 + recovery_effort * 0.85) + pulse * 0.008
+            target_temperature = self.config.temperature_base + 1.8 + recovery_effort * 6.2 + 0.7 * sin(phase * 0.45)
+            target_frequency = self.config.air_frequency * (0.55 + recovery_effort * 0.45)
+            target_air_flow = 8.0 + load * 145.0 + pressure_loss_ratio * 50.0
+            target_sound_db = 47.0 + recovery_effort * 21.0 + leak_ratio * 10.0
 
         if state == "off":
             self.pressure = target_pressure
@@ -182,21 +214,43 @@ class Simulator:
         self.air_flow = self._ease(self.air_flow, target_air_flow, 0.28) + noise(-0.7, 0.7)
         self.sound_db = self._ease(self.sound_db, target_sound_db, 0.22) + noise(-0.6, 0.6)
 
+        enabled_detection_fields = set(self.config.waste_detection_fields)
+        use_air_flow = "air_flow" in enabled_detection_fields
+        use_sound_db = "sound_db" in enabled_detection_fields
+        use_current = "current" in enabled_detection_fields
+        use_pressure = "pressure" in enabled_detection_fields
+        use_vibration = "vibration" in enabled_detection_fields
+        use_temperature = "temperature" in enabled_detection_fields
+        pressure_loss = max(self.config.pressure_target - self.pressure, 0.0)
+        pressure_loss_threshold = self.config.pressure_target * PRESSURE_LOSS_ALERT_RATIO
+        pressure_score = self._threshold_score(pressure_loss, pressure_loss_threshold) if use_pressure else 0
+        pressure_loss_detected = is_non_production and use_pressure and pressure_score >= 100
+
         leak_baseline = self._leak_baseline()
         baseline_ready = leak_baseline["ready"]
         leak_score = 0
         leak_suspected = False
+        leak_scores = []
         if baseline_ready:
-            air_score = self._dynamic_score(self.air_flow, leak_baseline["air_median"], leak_baseline["air_limit"])
-            sound_score = self._dynamic_score(self.sound_db, leak_baseline["sound_median"], leak_baseline["sound_limit"])
-            leak_score = min(air_score, sound_score)
-            leak_suspected = air_score >= 100 and sound_score >= 100
-        leak_score = max(leak_score, self.config.leak_level)
-        scenario_leak_detected = self.config.leak_level >= LEAK_SCENARIO_ALERT_LEVEL
-        leak_detected = scenario_leak_detected or (is_non_production and baseline_ready and leak_suspected)
+            if use_air_flow:
+                leak_scores.append(
+                    self._dynamic_score(self.air_flow, leak_baseline["air_median"], leak_baseline["air_limit"])
+                )
+            if use_sound_db:
+                leak_scores.append(
+                    self._dynamic_score(self.sound_db, leak_baseline["sound_median"], leak_baseline["sound_limit"])
+                )
+            if leak_scores:
+                leak_score = min(leak_scores)
+                leak_suspected = all(score >= 100 for score in leak_scores)
+        has_leak_inputs = use_air_flow or use_sound_db or use_pressure
+        leak_score = max(leak_score, pressure_score, self.config.leak_level) if has_leak_inputs else 0
+        scenario_leak_detected = has_leak_inputs and self.config.leak_level >= LEAK_SCENARIO_ALERT_LEVEL
+        leak_detected = scenario_leak_detected or pressure_loss_detected or (is_non_production and baseline_ready and leak_suspected)
 
         idle_power_threshold = self.config.current_base * IDLE_CURRENT_RATIO_THRESHOLD
-        idle_power_detected = is_non_production and self.compressor_on and self.current > idle_power_threshold
+        current_idle_detected = use_current and self.current > idle_power_threshold
+        idle_power_detected = is_non_production and self.compressor_on and (pressure_loss_detected or current_idle_detected)
         self.leak_sustain_count = self.leak_sustain_count + 1 if leak_detected else 0
         self.idle_power_sustain_count = self.idle_power_sustain_count + 1 if idle_power_detected else 0
         leak_alert = self.leak_sustain_count >= ALERT_SUSTAIN_COUNT
@@ -213,16 +267,26 @@ class Simulator:
             self.leak_air_baseline.append(max(self.air_flow, 0))
             self.leak_sound_baseline.append(max(self.sound_db, 0))
 
-        idle_power_score = self._threshold_score(self.current, idle_power_threshold) if is_non_production else 0
-        vibration_score = self._threshold_score(self.vibration, VIBRATION_ALARM_THRESHOLD)
-        current_score = self._threshold_score(self.current, self.config.current_base * CURRENT_ALARM_RATIO_THRESHOLD)
-        temperature_score = self._threshold_score(self.temperature, self.config.temperature_base + TEMPERATURE_ALARM_DELTA)
-        anomaly_score = max(leak_score, idle_power_score, vibration_score, current_score, temperature_score)
+        current_idle_score = self._threshold_score(self.current, idle_power_threshold) if is_non_production and use_current else 0
+        idle_power_score = max(pressure_score if is_non_production and use_pressure else 0, current_idle_score)
+        vibration_score = self._threshold_score(self.vibration, VIBRATION_ALARM_THRESHOLD) if use_vibration else 0
+        current_score = (
+            self._threshold_score(self.current, self.config.current_base * CURRENT_ALARM_RATIO_THRESHOLD)
+            if use_current
+            else 0
+        )
+        temperature_score = (
+            self._threshold_score(self.temperature, self.config.temperature_base + TEMPERATURE_ALARM_DELTA)
+            if use_temperature
+            else 0
+        )
+        anomaly_score = max(leak_score, idle_power_score, vibration_score, current_score, pressure_score, temperature_score)
 
         alarm_level = int(
-            self.vibration > VIBRATION_ALARM_THRESHOLD
-            or self.current > self.config.current_base * CURRENT_ALARM_RATIO_THRESHOLD
-            or self.temperature > self.config.temperature_base + TEMPERATURE_ALARM_DELTA
+            (use_vibration and self.vibration > VIBRATION_ALARM_THRESHOLD)
+            or (use_current and self.current > self.config.current_base * CURRENT_ALARM_RATIO_THRESHOLD)
+            or pressure_loss_detected
+            or (use_temperature and self.temperature > self.config.temperature_base + TEMPERATURE_ALARM_DELTA)
             or alert_level > 0
         )
 
@@ -252,6 +316,10 @@ class Simulator:
             "anomaly_score": anomaly_score,
             "leak_score": leak_score,
             "idle_power_score": idle_power_score,
+            "current_score": current_score,
+            "pressure_score": pressure_score,
+            "vibration_score": vibration_score,
+            "temperature_score": temperature_score,
             "baseline_ready": baseline_ready,
             "baseline_count": leak_baseline["count"],
             "baseline_source": "dynamic",
@@ -261,6 +329,7 @@ class Simulator:
             "baseline_sound_db_limit": round(leak_baseline["sound_limit"], 1),
             "leak_sustain_count": self.leak_sustain_count,
             "idle_power_sustain_count": self.idle_power_sustain_count,
+            "waste_detection_fields": list(self.config.waste_detection_fields),
         }
         self.history.append(sample)
         return sample
@@ -272,20 +341,42 @@ class Simulator:
                     "timestamp": datetime.now().strftime("%H:%M:%S"),
                     "type": "압축공기 누설 의심",
                     "priority": "높음",
-                    "location": "압축공기 배관 주변",
-                    "message": "미사용 시간대에 공기 사용량과 소음이 최근 정상 기준선을 함께 초과했습니다.",
+                    "location": "압축공기 라인",
+                    "fields": ["pressure", "air_flow", "sound_db"],
+                    "message": "미사용 시간대에 압력 손실이 기준선을 벗어났고, 보조 센서 값이 함께 변동될 수 있습니다.",
                 }
             )
         if idle_power_alert and self.idle_power_sustain_count == ALERT_SUSTAIN_COUNT:
             self.alert_events.appendleft(
                 {
                     "timestamp": datetime.now().strftime("%H:%M:%S"),
-                    "type": "유휴 설비 전력 낭비 의심",
+                    "type": "압력 유지 전력 낭비 의심",
                     "priority": "중간",
-                    "location": "설비 전원부",
-                    "message": f"비생산 시간대에 전류가 기준 전류의 {IDLE_CURRENT_RATIO_THRESHOLD:.0%}를 초과한 상태로 유지됩니다.",
+                    "location": "압력 유지 운전",
+                    "fields": ["pressure", "current"],
+                    "message": "미사용 시간대 압력 손실을 보충하기 위해 전류가 소모되는 패턴이 유지됩니다.",
                 }
             )
+
+    def _sync_alert_state_with_detection_fields(self):
+        enabled_fields = set(self.config.waste_detection_fields)
+        if not ({"pressure", "current"} & enabled_fields):
+            self.idle_power_sustain_count = 0
+        if not ({"pressure", "air_flow", "sound_db"} & enabled_fields):
+            self.leak_sustain_count = 0
+        self.alert_events = deque(
+            (
+                alert
+                for alert in self.alert_events
+                if self._alert_applies_to_fields(alert, enabled_fields)
+            ),
+            maxlen=self.alert_events.maxlen,
+        )
+
+    @staticmethod
+    def _alert_applies_to_fields(alert, enabled_fields):
+        alert_fields = set(alert.get("fields") or ALERT_TYPE_FIELDS.get(alert.get("type"), set()))
+        return not alert_fields or bool(alert_fields & enabled_fields)
 
     def _current_time_mode(self):
         return self._time_mode_for_config(self.config)
