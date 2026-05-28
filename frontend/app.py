@@ -1217,10 +1217,8 @@ with page_col:
         ["요약", "그래프", "설정"],
         st.session_state.page_control,
         "page_control",
+        state_key="page_control",
     )
-    if selected_page != st.session_state.page_control:
-        st.session_state.page_control = selected_page
-        st.rerun()
 
 if not server_available:
     st.error(f"서버 연결 실패: {st.session_state.get('api_error', '응답 없음')}")
@@ -1324,90 +1322,90 @@ def render_settings_page():
 
     with control_col:
         st.markdown('<div class="panel-title">설비 등록</div>', unsafe_allow_html=True)
-        e1, e2, e3 = st.columns([1, 1, 0.58])
-        with e1:
-            new_equipment_name = st.text_input("이름", placeholder="예: 컴프레셔 2")
-        with e2:
-            new_equipment_area = st.text_input("구역", placeholder="예: B동 2층")
-        with e3:
-            st.write("")
-            register_clicked = st.button("등록", width="stretch")
-        if register_clicked:
-            name = new_equipment_name.strip()
-            area = new_equipment_area.strip()
-            if not name or not area:
-                st.warning("설비 이름과 구역을 모두 입력해주세요.")
-            else:
-                created = create_equipment(name, area)
-                if created is not None:
-                    st.session_state.selected_equipment_id = created["equipment"]["id"]
-                    st.rerun()
+        with st.form("equipment_create_form", clear_on_submit=True):
+            e1, e2, e3 = st.columns([1, 1, 0.58])
+            with e1:
+                new_equipment_name = st.text_input("이름", placeholder="예: 컴프레셔 2")
+            with e2:
+                new_equipment_area = st.text_input("구역", placeholder="예: B동 2층")
+            with e3:
+                st.write("")
+                register_clicked = st.form_submit_button("등록", width="stretch")
+            if register_clicked:
+                name = new_equipment_name.strip()
+                area = new_equipment_area.strip()
+                if not name or not area:
+                    st.warning("설비 이름과 구역을 모두 입력해주세요.")
+                else:
+                    created = create_equipment(name, area)
+                    if created is not None:
+                        st.session_state.selected_equipment_id = created["equipment"]["id"]
+                        st.rerun()
 
         st.markdown('<div class="panel-title">운전 조작</div>', unsafe_allow_html=True)
-        t1, t2 = st.columns(2)
-        with t1:
-            usage_start_time = st.time_input(
-                "컴프레셔 사용 시작",
-                value=parse_config_time(config["usage_start_time"], time(8, 0)),
-                step=900,
-            )
-        with t2:
-            usage_end_time = st.time_input(
-                "컴프레셔 사용 종료",
-                value=parse_config_time(config["usage_end_time"], time(18, 0)),
-                step=900,
-            )
+        with st.form("simulator_config_form"):
+            t1, t2 = st.columns(2)
+            with t1:
+                usage_start_time = st.time_input(
+                    "컴프레셔 사용 시작",
+                    value=parse_config_time(config["usage_start_time"], time(8, 0)),
+                    step=900,
+                )
+            with t2:
+                usage_end_time = st.time_input(
+                    "컴프레셔 사용 종료",
+                    value=parse_config_time(config["usage_end_time"], time(18, 0)),
+                    step=900,
+                )
 
-        b1, b2, b3, b4 = st.columns(4)
-        with b1:
-            lunch_start_time = st.time_input(
-                "점심 시작",
-                value=parse_config_time(config["lunch_start_time"], time(12, 0)),
-                step=900,
-            )
-        with b2:
-            lunch_end_time = st.time_input(
-                "점심 종료",
-                value=parse_config_time(config["lunch_end_time"], time(13, 0)),
-                step=900,
-            )
-        with b3:
-            rest_start_time = st.time_input(
-                "쉬는시간 시작",
-                value=parse_config_time(config["rest_start_time"], time(15, 0)),
-                step=900,
-            )
-        with b4:
-            rest_end_time = st.time_input(
-                "쉬는시간 종료",
-                value=parse_config_time(config["rest_end_time"], time(15, 15)),
-                step=900,
-            )
+            b1, b2, b3, b4 = st.columns(4)
+            with b1:
+                lunch_start_time = st.time_input(
+                    "점심 시작",
+                    value=parse_config_time(config["lunch_start_time"], time(12, 0)),
+                    step=900,
+                )
+            with b2:
+                lunch_end_time = st.time_input(
+                    "점심 종료",
+                    value=parse_config_time(config["lunch_end_time"], time(13, 0)),
+                    step=900,
+                )
+            with b3:
+                rest_start_time = st.time_input(
+                    "쉬는시간 시작",
+                    value=parse_config_time(config["rest_start_time"], time(15, 0)),
+                    step=900,
+                )
+            with b4:
+                rest_end_time = st.time_input(
+                    "쉬는시간 종료",
+                    value=parse_config_time(config["rest_end_time"], time(15, 15)),
+                    step=900,
+                )
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            load_percent = st.slider("부하율 (%)", 0, 100, int(config["load_percent"]), 1)
-            current_leak_label = "누설 발생" if st.session_state.leak_scenario == "leak" else "누설 없음"
-            leak_scenario_label = button_choice(
-                "누설 상황",
-                ["누설 없음", "누설 발생"],
-                current_leak_label,
-                "leak_scenario_control",
-                state_key="leak_scenario",
-                value_map={"누설 없음": "normal", "누설 발생": "leak"},
-            )
-            leak_scenario = "leak" if leak_scenario_label == "누설 발생" else "normal"
-            st.session_state.leak_scenario = leak_scenario
-            st.session_state.leak_scenario_equipment_id = st.session_state.selected_equipment_id or "default"
-            leak_level = LEAK_ACTIVE_LEVEL if leak_scenario == "leak" else 0
-            vibration_base = st.slider("진동 기준값 (g RMS)", 0.001, 0.050, float(config["vibration_base"]), 0.001)
-        with c2:
-            idle_power_level = st.slider("미사용 압력 손실 정도 (%)", 0, 100, int(config["idle_power_level"]), 1)
-            current_base = st.slider("전류 기준값 (A)", 0.2, 8.0, float(config["current_base"]), 0.1)
-            pressure_target = st.slider("목표 압력 (bar)", 0.2, 10.0, float(config["pressure_target"]), 0.1)
-        with c3:
-            temperature_base = st.slider("기준 온도 (℃)", 10.0, 60.0, float(config["temperature_base"]), 0.5)
-            air_frequency = st.slider("공기 주파수 (Hz)", 0, 500, int(config["air_frequency"]), 1)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                load_percent = st.slider("부하율 (%)", 0, 100, int(config["load_percent"]), 1)
+                current_leak_label = "누설 발생" if st.session_state.leak_scenario == "leak" else "누설 없음"
+                leak_scenario_label = st.radio(
+                    "누설 상황",
+                    ["누설 없음", "누설 발생"],
+                    index=["누설 없음", "누설 발생"].index(current_leak_label),
+                    horizontal=True,
+                )
+                leak_scenario = "leak" if leak_scenario_label == "누설 발생" else "normal"
+                leak_level = LEAK_ACTIVE_LEVEL if leak_scenario == "leak" else 0
+                vibration_base = st.slider("진동 기준값 (g RMS)", 0.001, 0.050, float(config["vibration_base"]), 0.001)
+            with c2:
+                idle_power_level = st.slider("미사용 압력 손실 정도 (%)", 0, 100, int(config["idle_power_level"]), 1)
+                current_base = st.slider("전류 기준값 (A)", 0.2, 8.0, float(config["current_base"]), 0.1)
+                pressure_target = st.slider("목표 압력 (bar)", 0.2, 10.0, float(config["pressure_target"]), 0.1)
+            with c3:
+                temperature_base = st.slider("기준 온도 (℃)", 10.0, 60.0, float(config["temperature_base"]), 0.5)
+                air_frequency = st.slider("공기 주파수 (Hz)", 0, 500, int(config["air_frequency"]), 1)
+
+            apply_config_clicked = st.form_submit_button("적용", type="primary", width="stretch")
 
     config_payload = {
         "usage_start_time": usage_start_time.strftime("%H:%M"),
@@ -1426,10 +1424,14 @@ def render_settings_page():
         "air_frequency": air_frequency,
         "waste_detection_fields": normalize_waste_detection_fields(config.get("waste_detection_fields")),
     }
-    if server_available:
+    if apply_config_clicked:
+        st.session_state.leak_scenario = leak_scenario
+        st.session_state.leak_scenario_equipment_id = st.session_state.selected_equipment_id or "default"
+    if server_available and apply_config_clicked:
         updated_snapshot = update_server_config(config_payload)
         if updated_snapshot is not None:
             snapshot = updated_snapshot
+            st.success("설정이 적용되었습니다.")
 
     with state_col:
         active_state = snapshot["status"] if server_available else "off"
