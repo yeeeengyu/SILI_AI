@@ -848,7 +848,10 @@ def init_state():
     if "compressor_on" not in st.session_state:
         st.session_state.compressor_on = True
     if "api_base_url" not in st.session_state:
-        st.session_state.api_base_url = os.environ.get("SILI_API_BASE_URL", "http://localhost:8000")
+        st.session_state.api_base_url = os.environ.get(
+            "SILI_API_BASE_URL",
+            "https://port-0-sili-ai-mcn12bdr8fab7aae.sel5.cloudtype.app",
+        ).rstrip("/")
     if "selected_equipment_id" not in st.session_state:
         st.session_state.selected_equipment_id = ""
 
