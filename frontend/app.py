@@ -1,6 +1,7 @@
 from datetime import datetime, time
 from html import escape
 import json
+import os
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -8,6 +9,21 @@ from urllib.request import Request, urlopen
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+WASTE_DETECTION_OPTIONS = [
+    ("air_flow", "공기 사용량"),
+    ("sound_db", "소음"),
+    ("current", "전류"),
+    ("pressure", "압력"),
+    ("vibration", "진동"),
+    ("temperature", "온도"),
+]
+DEFAULT_WASTE_DETECTION_FIELDS = [key for key, _ in WASTE_DETECTION_OPTIONS]
+ALERT_FIELDS_BY_TYPE = {
+    "압축공기 누설 의심": {"pressure", "air_flow", "sound_db"},
+    "압력 유지 전력 낭비 의심": {"pressure", "current"},
+    "유휴 설비 전력 낭비 의심": {"pressure", "current"},
+}
 
 
 # =========================
@@ -36,7 +52,7 @@ st.markdown(
     }
 
     .main-title {
-        font-size: 38px;
+        font-size: 58px;
         font-weight: 800;
         margin-bottom: 4px;
         letter-spacing: 0;
@@ -93,6 +109,46 @@ st.markdown(
         font-size: 17px;
         color: #667085;
         margin-left: 5px;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: #ffffff !important;
+        border: 1px solid #c8d1df !important;
+        border-radius: 8px !important;
+        box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08);
+        min-height: 124px !important;
+        margin-bottom: 12px;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        padding: 18px 20px !important;
+    }
+
+    div[data-testid="column"]:has(.sensor-card-marker),
+    div[data-testid="stColumn"]:has(.sensor-card-marker) {
+        background: #ffffff !important;
+        border: 1px solid #c8d1df !important;
+        border-radius: 8px !important;
+        padding: 18px 20px !important;
+        min-height: 124px !important;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08);
+    }
+
+    div[data-testid="column"]:has(.sensor-card-marker) div[data-testid="stVerticalBlockBorderWrapper"],
+    div[data-testid="stColumn"]:has(.sensor-card-marker) div[data-testid="stVerticalBlockBorderWrapper"] {
+        border: 0 !important;
+        box-shadow: none !important;
+        min-height: 0 !important;
+        margin-bottom: 0;
+    }
+
+    .sensor-card-marker {
+        display: none;
+    }
+
+    .sensor-card-toggle {
+        display: none;
     }
 
     .summary-section {
@@ -295,6 +351,8 @@ st.markdown(
 
     div[data-testid="stWidgetLabel"],
     div[data-testid="stWidgetLabel"] *,
+    div[data-testid="stCheckbox"] label,
+    div[data-testid="stCheckbox"] label *,
     div[data-testid="stTextInput"] label,
     div[data-testid="stTextInput"] label *,
     div[data-testid="stTimeInput"] label,
@@ -305,6 +363,74 @@ st.markdown(
     div[data-testid="stSelectbox"] label * {
         color: #475467 !important;
         font-weight: 800 !important;
+    }
+
+    div[data-testid="column"]:has(.sensor-card-marker) div[data-testid="stCheckbox"],
+    div[data-testid="stColumn"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] {
+        display: flex;
+        justify-content: stretch;
+        align-items: stretch;
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 108px;
+        min-height: 100%;
+        margin: 0;
+    }
+
+    div[data-testid="column"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] label,
+    div[data-testid="stColumn"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] label {
+        width: 100%;
+        height: 100%;
+        justify-content: center;
+        align-items: center;
+        padding: 0 !important;
+        border-radius: 0;
+        background: #f8fafc;
+        border: 0;
+        border-left: 1px solid #d8dee8;
+        box-shadow: none;
+    }
+
+    div[data-testid="column"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] label:has(input:checked),
+    div[data-testid="stColumn"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] label:has(input:checked) {
+        background: rgba(255, 96, 92, 0.1);
+        border-left-color: rgba(255, 96, 92, 0.4);
+    }
+
+    div[data-testid="column"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] label > div,
+    div[data-testid="stColumn"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] label > div {
+        margin: 0 !important;
+    }
+
+    div[data-testid="column"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] label > div:first-child,
+    div[data-testid="stColumn"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] label > div:first-child {
+        width: 38px !important;
+        height: 38px !important;
+        min-width: 38px !important;
+        border-radius: 6px !important;
+        border: 2px solid #c8d1df !important;
+        background-color: #ffffff !important;
+        box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+    }
+
+    div[data-testid="column"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] label:has(input:checked) > div:first-child,
+    div[data-testid="stColumn"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] label:has(input:checked) > div:first-child {
+        border-color: #ff605c !important;
+        background-color: #ff605c !important;
+        box-shadow: 0 1px 3px rgba(255, 96, 92, 0.28);
+    }
+
+    div[data-testid="column"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] svg,
+    div[data-testid="stColumn"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] svg {
+        width: 24px !important;
+        height: 24px !important;
+    }
+
+    div[data-testid="column"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] p,
+    div[data-testid="stColumn"]:has(.sensor-card-marker) div[data-testid="stCheckbox"] p {
+        display: none;
     }
 
     div[data-testid="stTextInput"] input,
@@ -431,6 +557,51 @@ st.markdown(
         color: #ffffff !important;
     }
 
+    div[data-testid="column"]:has(.sensor-card-toggle) div[data-testid="stButton"] button,
+    div[data-testid="stColumn"]:has(.sensor-card-toggle) div[data-testid="stButton"] button {
+        width: 100% !important;
+        min-width: 86px !important;
+        min-height: 86px !important;
+        height: 86px !important;
+        padding: 0 !important;
+        border-radius: 8px !important;
+        border: 2px solid #c8d1df !important;
+        background: #ffffff !important;
+        color: transparent !important;
+        box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+        font-size: 36px !important;
+        line-height: 1 !important;
+    }
+
+    div[data-testid="column"]:has(.sensor-card-toggle) div[data-testid="stButton"] button *,
+    div[data-testid="stColumn"]:has(.sensor-card-toggle) div[data-testid="stButton"] button * {
+        color: inherit !important;
+        font-size: inherit !important;
+        line-height: inherit !important;
+    }
+
+    div[data-testid="column"]:has(.sensor-card-toggle-on) div[data-testid="stButton"] button,
+    div[data-testid="stColumn"]:has(.sensor-card-toggle-on) div[data-testid="stButton"] button {
+        border-color: #ff605c !important;
+        background: #ff605c !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 3px rgba(255, 96, 92, 0.28);
+    }
+
+    div[data-testid="column"]:has(.sensor-card-toggle) div[data-testid="stButton"] button:hover,
+    div[data-testid="stColumn"]:has(.sensor-card-toggle) div[data-testid="stButton"] button:hover {
+        border-color: #ff6b5f !important;
+        background: #fff4f2 !important;
+        color: #e5483f !important;
+    }
+
+    div[data-testid="column"]:has(.sensor-card-toggle-on) div[data-testid="stButton"] button:hover,
+    div[data-testid="stColumn"]:has(.sensor-card-toggle-on) div[data-testid="stButton"] button:hover {
+        border-color: #e5483f !important;
+        background: #e5483f !important;
+        color: #ffffff !important;
+    }
+
     .js-plotly-plot text {
         fill: #1f2933 !important;
         color: #1f2933 !important;
@@ -513,20 +684,21 @@ st.markdown(
     .log-table th {
         background: #f8fafc;
         color: #475467;
-        font-size: 14px;
+        font-size: 17px;
         font-weight: 800;
         text-align: left;
-        padding: 11px 12px;
+        padding: 14px 16px;
         border-bottom: 1px solid #d8dee8;
     }
 
     .log-table td {
         color: #101828;
-        font-size: 14px;
+        font-size: 17px;
         font-weight: 700;
-        padding: 12px;
+        padding: 15px 16px;
         border-bottom: 1px solid #edf1f7;
         vertical-align: middle;
+        line-height: 1.35;
     }
 
     .log-table tr:last-child td {
@@ -546,12 +718,12 @@ st.markdown(
     }
 
     .empty-log {
-        padding: 16px;
+        padding: 18px 20px;
         border: 1px solid #b9dcff;
         border-radius: 8px;
         background: #eef7ff;
         color: #1570ef;
-        font-size: 15px;
+        font-size: 18px;
         font-weight: 700;
     }
 
@@ -630,11 +802,53 @@ def format_rest_period(config):
     return f'{config["rest_start_time"]} ~ {config["rest_end_time"]}'
 
 
+def normalize_waste_detection_fields(raw_fields):
+    if raw_fields is None:
+        return DEFAULT_WASTE_DETECTION_FIELDS.copy()
+    if not isinstance(raw_fields, list):
+        return DEFAULT_WASTE_DETECTION_FIELDS.copy()
+    return [key for key, _ in WASTE_DETECTION_OPTIONS if key in raw_fields]
+
+
+def alert_applies_to_active_fields(alert, active_fields):
+    active_field_set = set(active_fields)
+    alert_fields = set(alert.get("fields") or ALERT_FIELDS_BY_TYPE.get(alert.get("type"), set()))
+    return not alert_fields or bool(alert_fields & active_field_set)
+
+
+def filter_alerts_for_active_fields(alerts, active_fields):
+    return [alert for alert in alerts if alert_applies_to_active_fields(alert, active_fields)]
+
+
+def active_score_items(latest, active_fields):
+    active_field_set = set(active_fields)
+    items = []
+    if "pressure" in active_field_set:
+        items.append(("압력 손실 의심도", int(latest.get("pressure_score", 0))))
+        items.append(("압력 유지 전력", int(latest.get("idle_power_score", 0))))
+    if {"air_flow", "sound_db"} & active_field_set:
+        items.append(("누설 의심도", int(latest.get("leak_score", 0))))
+    if "current" in active_field_set and "pressure" not in active_field_set:
+        items.append(("유휴 의심도", int(latest.get("idle_power_score", 0))))
+    if "vibration" in active_field_set:
+        items.append(("진동 의심도", int(latest.get("vibration_score", 0))))
+    if "temperature" in active_field_set:
+        items.append(("온도 의심도", int(latest.get("temperature_score", 0))))
+    return items
+
+
+def active_anomaly_text(latest, active_fields):
+    scored_items = [(label, score) for label, score in active_score_items(latest, active_fields) if score > 0]
+    if not scored_items:
+        return "선택한 감지 항목"
+    return ", ".join(f"{label} {score}%" for label, score in scored_items)
+
+
 def init_state():
     if "compressor_on" not in st.session_state:
         st.session_state.compressor_on = True
     if "api_base_url" not in st.session_state:
-        st.session_state.api_base_url = "http://localhost:8000"
+        st.session_state.api_base_url = os.environ.get("SILI_API_BASE_URL", "http://localhost:8000")
     if "selected_equipment_id" not in st.session_state:
         st.session_state.selected_equipment_id = ""
 
@@ -734,22 +948,22 @@ def line_chart(df, y, title, unit, color, height=245):
     fig.update_layout(
         template="plotly_white",
         height=height,
-        margin=dict(l=22, r=18, t=38, b=26),
+        margin=dict(l=30, r=22, t=48, b=34),
         paper_bgcolor="#ffffff",
         plot_bgcolor="#ffffff",
-        font=dict(color="#1f2933", size=13),
-        title=dict(text=title, font=dict(size=16, color="#101828")),
+        font=dict(color="#1f2933", size=16),
+        title=dict(text=title, font=dict(size=21, color="#101828"), y=0.96),
         xaxis=dict(
             gridcolor="#d8dee8",
             zerolinecolor="#d8dee8",
             linecolor="#d8dee8",
-            tickfont=dict(size=12, color="#475467"),
+            tickfont=dict(size=15, color="#475467"),
         ),
         yaxis=dict(
             gridcolor="#d8dee8",
             zerolinecolor="#d8dee8",
             linecolor="#d8dee8",
-            tickfont=dict(size=12, color="#475467"),
+            tickfont=dict(size=15, color="#475467"),
         ),
         showlegend=False,
         hovermode=False,
@@ -763,10 +977,12 @@ def chart_title(latest, key, title, unit, precision=1):
     return f"{title}: {value:.{precision}f} {unit}"
 
 
-def render_alert_log(alerts):
+def render_alert_log(alerts, active_fields=None):
+    if active_fields is not None:
+        alerts = filter_alerts_for_active_fields(alerts, active_fields)
     if not alerts:
         st.markdown(
-            '<div class="empty-log">아직 기록된 누설 또는 유휴 전력 낭비 알림이 없습니다.</div>',
+            '<div class="empty-log">선택한 감지 항목에 기록된 알림이 없습니다.</div>',
             unsafe_allow_html=True,
         )
         return
@@ -827,6 +1043,56 @@ def summary_info_card_html(label, value):
     )
 
 
+def render_sensor_card_with_detection(field_key, label, value, unit, checked, equipment_key):
+    st.markdown('<span class="sensor-card-marker"></span>', unsafe_allow_html=True)
+    header_label, toggle_col = st.columns([1, 0.22], gap="small", vertical_alignment="center")
+    with header_label:
+        st.markdown(f'<div class="status-label">{escape(str(label))}</div>', unsafe_allow_html=True)
+        st.markdown(
+            (
+                "<div>"
+                f'<span class="status-value">{escape(str(value))}</span>'
+                f'<span class="status-unit">{escape(str(unit))}</span>'
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+    with toggle_col:
+        toggle_class = "sensor-card-toggle-on" if checked else "sensor-card-toggle-off"
+        st.markdown(f'<span class="sensor-card-toggle {toggle_class}"></span>', unsafe_allow_html=True)
+        clicked = st.button(
+            "✓" if checked else " ",
+            key=f"waste_detection_{equipment_key}_{field_key}",
+            help="낭비 판단에 포함",
+            width="stretch",
+        )
+        if clicked:
+            checked = not checked
+    return checked
+
+
+def render_sensor_cards_with_detection(sensor_cards, active_fields, equipment_id):
+    active_field_set = set(active_fields)
+    selected_field_set = set()
+    equipment_key = equipment_id or "default"
+    st.markdown('<div class="summary-section"></div>', unsafe_allow_html=True)
+    for row_start in range(0, len(sensor_cards), 3):
+        columns = st.columns(3, border=True)
+        for column, (field_key, label, value, unit) in zip(columns, sensor_cards[row_start : row_start + 3]):
+            with column:
+                checked = render_sensor_card_with_detection(
+                    field_key,
+                    label,
+                    value,
+                    unit,
+                    field_key in active_field_set,
+                    equipment_key,
+                )
+                if checked:
+                    selected_field_set.add(field_key)
+    return [key for key, _ in WASTE_DETECTION_OPTIONS if key in selected_field_set]
+
+
 def state_panel(active_state):
     tiles = []
     for key in ("running", "idle", "off"):
@@ -877,6 +1143,7 @@ default_config = {
     "pressure_target": 4.2,
     "temperature_base": 29.0,
     "air_frequency": 412,
+    "waste_detection_fields": DEFAULT_WASTE_DETECTION_FIELDS.copy(),
 }
 config = {**default_config, **snapshot["config"]} if server_available else default_config
 current_power = snapshot["compressor_on"] if server_available else st.session_state.compressor_on
@@ -888,8 +1155,13 @@ if server_available and not current_power:
         config = {**default_config, **snapshot["config"]}
         current_power = True
 st.session_state.compressor_on = current_power
-if "leak_scenario" not in st.session_state:
+equipment_state_key = st.session_state.selected_equipment_id or "default"
+if (
+    "leak_scenario" not in st.session_state
+    or st.session_state.get("leak_scenario_equipment_id") != equipment_state_key
+):
     st.session_state.leak_scenario = "leak" if int(config["leak_level"]) > 0 else "normal"
+    st.session_state.leak_scenario_equipment_id = equipment_state_key
 if "page_control" not in st.session_state:
     st.session_state.page_control = "요약"
 if st.session_state.page_control == "대시보드":
@@ -903,7 +1175,7 @@ equipment_area = selected_equipment.get("area", "구역 미지정")
 st.markdown(
     f"""
     <div class="main-title">{equipment_name} · {equipment_area}</div>
-    <div class="sub-title">압축공기 누설 및 유휴설비 절전 알림 시스템</div>
+    <div class="sub-title">압력 손실 기반 압축공기 누설 및 전력 낭비 알림 시스템</div>
     """,
     unsafe_allow_html=True,
 )
@@ -956,6 +1228,7 @@ def build_live_values():
     active_state = live_snapshot["status"] if live_snapshot else "off"
     history = live_snapshot["history"] if live_snapshot else []
     alerts = live_snapshot["alerts"] if live_snapshot else []
+    live_config = {**default_config, **live_snapshot["config"]} if live_snapshot else default_config
     df = pd.DataFrame(history)
     latest = live_snapshot["latest"] if live_snapshot else {
         "time_mode": "production",
@@ -981,6 +1254,10 @@ def build_live_values():
         "anomaly_score": 0,
         "leak_score": 0,
         "idle_power_score": 0,
+        "current_score": 0,
+        "pressure_score": 0,
+        "vibration_score": 0,
+        "temperature_score": 0,
         "baseline_ready": False,
         "baseline_count": 0,
         "baseline_source": "dynamic",
@@ -990,6 +1267,7 @@ def build_live_values():
         "baseline_sound_db_limit": 0,
         "leak_sustain_count": 0,
         "idle_power_sustain_count": 0,
+        "waste_detection_fields": DEFAULT_WASTE_DETECTION_FIELDS.copy(),
         "timestamp": datetime.now().strftime("%H:%M:%S"),
     }
     latest = {
@@ -1016,6 +1294,10 @@ def build_live_values():
         "anomaly_score": 0,
         "leak_score": 0,
         "idle_power_score": 0,
+        "current_score": 0,
+        "pressure_score": 0,
+        "vibration_score": 0,
+        "temperature_score": 0,
         "baseline_ready": False,
         "baseline_count": 0,
         "baseline_source": "dynamic",
@@ -1025,10 +1307,11 @@ def build_live_values():
         "baseline_sound_db_limit": 0,
         "leak_sustain_count": 0,
         "idle_power_sustain_count": 0,
+        "waste_detection_fields": DEFAULT_WASTE_DETECTION_FIELDS.copy(),
         "timestamp": datetime.now().strftime("%H:%M:%S"),
         **latest,
     }
-    return active_state, df, latest, alerts
+    return active_state, df, latest, alerts, live_config
 
 
 def render_settings_page():
@@ -1112,10 +1395,11 @@ def render_settings_page():
             )
             leak_scenario = "leak" if leak_scenario_label == "누설 발생" else "normal"
             st.session_state.leak_scenario = leak_scenario
+            st.session_state.leak_scenario_equipment_id = st.session_state.selected_equipment_id or "default"
             leak_level = LEAK_ACTIVE_LEVEL if leak_scenario == "leak" else 0
             vibration_base = st.slider("진동 기준값 (g RMS)", 0.001, 0.050, float(config["vibration_base"]), 0.001)
         with c2:
-            idle_power_level = st.slider("유휴 전력 정도 (%)", 0, 100, int(config["idle_power_level"]), 1)
+            idle_power_level = st.slider("미사용 압력 손실 정도 (%)", 0, 100, int(config["idle_power_level"]), 1)
             current_base = st.slider("전류 기준값 (A)", 0.2, 8.0, float(config["current_base"]), 0.1)
             pressure_target = st.slider("목표 압력 (bar)", 0.2, 10.0, float(config["pressure_target"]), 0.1)
         with c3:
@@ -1137,6 +1421,7 @@ def render_settings_page():
         "pressure_target": pressure_target,
         "temperature_base": temperature_base,
         "air_frequency": air_frequency,
+        "waste_detection_fields": normalize_waste_detection_fields(config.get("waste_detection_fields")),
     }
     if server_available:
         updated_snapshot = update_server_config(config_payload)
@@ -1156,7 +1441,7 @@ def render_settings_page():
                     {"항목": "쉬는시간", "값": format_rest_period(config_payload)},
                     {"항목": "부하율", "값": f'{config_payload["load_percent"]}%'},
                     {"항목": "누설 상황", "값": "누설 발생" if config_payload["leak_level"] > 0 else "누설 없음"},
-                    {"항목": "유휴 전력 정도", "값": f'{config_payload["idle_power_level"]}%'},
+                    {"항목": "미사용 압력 손실", "값": f'{config_payload["idle_power_level"]}%'},
                     {"항목": "진동 기준값", "값": f'{config_payload["vibration_base"]:.3f} g RMS'},
                     {"항목": "전류 기준값", "값": f'{config_payload["current_base"]:.1f} A'},
                     {"항목": "목표 압력", "값": f'{config_payload["pressure_target"]:.1f} bar'},
@@ -1170,7 +1455,7 @@ def render_settings_page():
 
 
 def render_status_badge():
-    active_state, _, _, _ = build_live_values()
+    active_state, _, _, _, _ = build_live_values()
     status_meta = STATUS_META[active_state]
     st.markdown(
         f"""
@@ -1183,17 +1468,20 @@ def render_status_badge():
 
 
 def render_state_panel():
-    active_state, _, _, _ = build_live_values()
+    active_state, _, _, _, _ = build_live_values()
     state_panel(active_state)
 
 
 def render_summary_body():
-    active_state, df, latest, alerts = build_live_values()
+    active_state, df, latest, alerts, live_config = build_live_values()
     st.session_state.compressor_on = active_state != "off"
+    active_detection_fields = normalize_waste_detection_fields(live_config.get("waste_detection_fields"))
+    alerts = filter_alerts_for_active_fields(alerts, active_detection_fields)
 
     is_non_production = latest.get("time_mode") == "non_production"
     leak_score = int(latest.get("leak_score", 0))
     idle_power_score = int(latest.get("idle_power_score", 0))
+    pressure_score = int(latest.get("pressure_score", 0))
     anomaly_score = int(latest.get("anomaly_score", 0))
     baseline_ready = bool(latest.get("baseline_ready"))
     baseline_count = int(latest.get("baseline_count", 0))
@@ -1220,25 +1508,29 @@ def render_summary_body():
     mode_text = format_time_mode_reason(latest.get("time_mode_reason"), latest.get("time_mode"))
     usage_period_text = f'{latest.get("usage_start_time", config["usage_start_time"])} ~ {latest.get("usage_end_time", config["usage_end_time"])}'
     baseline_text = "동적 기준선" if baseline_ready else f"기준 학습 중 {baseline_count}/20"
-    alarm_count = int(df["alarm_level"].iloc[-80:].sum()) if "alarm_level" in df else 0
-    alarm_text = "점검 필요" if alarm_count > 0 else "정상"
+    alarm_text = "점검 필요" if latest.get("alarm_level", 0) > 0 or alerts else "정상"
     operation_text = f'{latest["operation"]:.1f}%'
 
     has_confirmed_alert = latest.get("alert_level", 0) > 0
     has_anomaly_pattern = anomaly_score >= 100
+    needs_dynamic_baseline = bool({"air_flow", "sound_db"} & set(active_detection_fields))
     alert_class = "alert-danger" if has_confirmed_alert or has_anomaly_pattern else "alert-normal"
     if has_confirmed_alert:
         alert_title = "점검 알림 발생"
-        alert_copy = "미사용 시간대에 동적 기준선을 벗어난 상태가 4회 연속 지속되었습니다. 알림 이력을 확인하고 우선 점검 위치를 확인하세요."
+        alert_copy = f"{active_anomaly_text(latest, active_detection_fields)} 기준 이탈이 4회 연속 지속되었습니다. 알림 이력을 확인하고 우선 점검 위치를 확인하세요."
     elif has_anomaly_pattern:
         alert_title = "이상 패턴 감지 중"
-        alert_copy = f"종합 의심도가 {anomaly_score}%입니다. 누설은 {leak_score}%, 유휴전력은 {idle_power_score}%이며 미사용 시간대에서 4회 연속 기준선을 벗어나면 점검 알림으로 확정됩니다."
-    elif not baseline_ready:
+        alert_copy = f"종합 의심도가 {anomaly_score}%입니다. {active_anomaly_text(latest, active_detection_fields)}로 선택한 감지 항목의 기준을 벗어났습니다."
+    elif needs_dynamic_baseline and not baseline_ready:
         alert_title = "동적 기준선 학습 중"
-        alert_copy = f"미사용 시간대 정상 패턴을 {baseline_count}/20개 수집했습니다. 기준선이 준비되면 누설 의심도를 계산합니다."
+        alert_copy = f"미사용 시간대 정상 패턴을 {baseline_count}/20개 수집했습니다. 기준선이 준비되면 선택한 감지 항목의 의심도를 계산합니다."
     else:
         alert_title = "현재 감지 상태 정상"
-        alert_copy = f"{baseline_text}에서 지속적인 이상 패턴이 감지되지 않았습니다."
+        alert_copy = (
+            f"{baseline_text}에서 지속적인 이상 패턴이 감지되지 않았습니다."
+            if needs_dynamic_baseline
+            else "선택한 감지 항목에서 지속적인 이상 패턴이 감지되지 않았습니다."
+        )
     st.markdown(
         (
             f'<div class="alert-panel {alert_class}">'
@@ -1250,34 +1542,72 @@ def render_summary_body():
     )
 
     sensor_cards = [
-        ("공기 사용량", f'{latest["air_flow"]:.1f}', "L/min"),
-        ("소음", f'{latest["sound_db"]:.1f}', "dB"),
-        ("전류", f'{latest["current"]:.2f}', "A"),
-        ("압력", f'{latest["pressure"]:.2f}', "bar"),
-        ("온도", f'{latest["temperature"]:.1f}', "℃"),
-        ("진동", f'{latest["vibration"]:.3f}', "g RMS"),
+        ("air_flow", "공기 사용량", f'{latest["air_flow"]:.1f}', "L/min"),
+        ("sound_db", "소음", f'{latest["sound_db"]:.1f}', "dB"),
+        ("current", "전류", f'{latest["current"]:.2f}', "A"),
+        ("pressure", "압력", f'{latest["pressure"]:.2f}', "bar"),
+        ("temperature", "온도", f'{latest["temperature"]:.1f}', "℃"),
+        ("vibration", "진동", f'{latest["vibration"]:.3f}', "g RMS"),
     ]
-    st.markdown(
-        (
-            '<div class="summary-section">'
-            '<div class="summary-sensor-grid">'
-            + "".join(metric_card_html(label, value, unit) for label, value, unit in sensor_cards)
-            + "</div>"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
+    selected_detection_fields = render_sensor_cards_with_detection(
+        sensor_cards,
+        active_detection_fields,
+        selected_equipment.get("id") or st.session_state.selected_equipment_id,
     )
+    if server_available and selected_detection_fields != active_detection_fields:
+        updated_snapshot = update_server_config(
+            {**live_config, "waste_detection_fields": selected_detection_fields}
+        )
+        if updated_snapshot is not None:
+            live_config = {**default_config, **updated_snapshot["config"]}
+            latest = {**latest, **updated_snapshot["latest"]}
+            active_detection_fields = selected_detection_fields
+            alerts = filter_alerts_for_active_fields(updated_snapshot.get("alerts", alerts), active_detection_fields)
+            df = pd.DataFrame(updated_snapshot.get("history", []))
+            leak_score = int(latest.get("leak_score", 0))
+            idle_power_score = int(latest.get("idle_power_score", 0))
+            pressure_score = int(latest.get("pressure_score", 0))
+            anomaly_score = int(latest.get("anomaly_score", 0))
+            baseline_ready = bool(latest.get("baseline_ready"))
+            baseline_count = int(latest.get("baseline_count", 0))
+            leak_sustain_count = int(latest.get("leak_sustain_count", 0))
+            idle_power_sustain_count = int(latest.get("idle_power_sustain_count", 0))
+            leak_text = (
+                "누설 의심"
+                if latest.get("leak_alert")
+                else f"감지 중 {leak_sustain_count}/4"
+                if is_non_production and leak_sustain_count > 0
+                else f"참고 {leak_score}%"
+                if not is_non_production and baseline_ready
+                else f"기준 학습 중 {baseline_count}/20"
+                if not baseline_ready
+                else "정상"
+            )
+            idle_text = (
+                "낭비 의심"
+                if latest.get("idle_power_alert")
+                else f"감지 중 {idle_power_sustain_count}/4"
+                if is_non_production and idle_power_sustain_count > 0
+                else "정상"
+            )
+            baseline_text = "동적 기준선" if baseline_ready else f"기준 학습 중 {baseline_count}/20"
+            alarm_text = "점검 필요" if latest.get("alarm_level", 0) > 0 or alerts else "정상"
+            operation_text = f'{latest["operation"]:.1f}%'
 
     info_cards = [
         ("시간 판정", mode_text),
         ("부하율", operation_text),
-        ("누설", leak_text),
-        ("유휴전력", idle_text),
-        ("누설 의심도", f"{leak_score}%"),
-        ("유휴 의심도", f"{idle_power_score}%"),
-        ("사용 시간", usage_period_text),
-        ("종합 의심도", f"{anomaly_score}%"),
     ]
+    if {"air_flow", "sound_db"} & set(active_detection_fields):
+        info_cards.extend([("누설", leak_text), ("누설 의심도", f"{leak_score}%")])
+    if "pressure" in active_detection_fields:
+        info_cards.extend([("압력 손실", f"{pressure_score}%"), ("압력 유지 전력", f"{idle_power_score}%")])
+    elif "current" in active_detection_fields:
+        info_cards.extend([("유휴전력", idle_text), ("유휴 의심도", f"{idle_power_score}%")])
+    for label, score in active_score_items(latest, active_detection_fields):
+        if label not in {"누설 의심도", "유휴 의심도", "압력 손실 의심도", "압력 유지 전력"}:
+            info_cards.append((label, f"{score}%"))
+    info_cards.extend([("사용 시간", usage_period_text), ("종합 의심도", f"{anomaly_score}%")])
     st.markdown(
         (
             '<div class="summary-info-grid">'
@@ -1288,14 +1618,14 @@ def render_summary_body():
     )
 
     st.markdown(f'<div class="panel-title">알림 및 점검 이력 · {alarm_text}</div>', unsafe_allow_html=True)
-    render_alert_log(alerts)
+    render_alert_log(alerts, active_detection_fields)
 
     server_time = latest.get("timestamp", datetime.now().strftime("%H:%M:%S"))
     st.caption(f"마지막 수신 시간: {server_time}")
 
 
 def render_graph_body():
-    active_state, df, latest, _ = build_live_values()
+    active_state, df, latest, _, _ = build_live_values()
     st.session_state.compressor_on = active_state != "off"
 
     chart_items = [
@@ -1317,7 +1647,7 @@ def render_graph_body():
                         chart_title(latest, key, label, unit, precision=precision),
                         unit,
                         color,
-                        height=275,
+                        height=315,
                     ),
                     width="stretch",
                     config=STATIC_CHART_CONFIG,
